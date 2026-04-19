@@ -2,31 +2,30 @@ import json
 import sqlite3
 import os
 
-# Configuration
-DB_NAME = 'cricket_data.db'
+# Database Path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, DB_NAME)
+DB_PATH = os.path.join(BASE_DIR, 'cricket_data.db')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 1. Matches Table: Stores metadata
+    # 1. Matches Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS matches 
                       (match_id TEXT PRIMARY KEY, match_type TEXT, season TEXT, venue TEXT)''')
     
-    # 2. Deliveries Table: Stores ball-by-ball data (with match_type for format-specific analysis)
+    # 2. Deliveries Table: Added match_type here to allow specific format filtering
     cursor.execute('''CREATE TABLE IF NOT EXISTS deliveries 
                       (match_id TEXT, match_type TEXT, batter TEXT, bowler TEXT, runs INTEGER, is_wicket INTEGER)''')
     
-    # 3. Match Players Table: Stores squads (with season for team filtering)
+    # 3. Match Players Table: Added match_type to separate IPL teams from T20/ODI international teams
     cursor.execute('''CREATE TABLE IF NOT EXISTS match_players 
-                      (match_id TEXT, team_name TEXT, player_name TEXT, season TEXT)''')
+                      (match_id TEXT, team_name TEXT, player_name TEXT, season TEXT, match_type TEXT)''')
                       
     conn.commit()
     conn.close()
-    print("✅ Database initialized successfully.")
+    print("✅ Database schema initialized with Format-Aware support.")
 
 def process_file(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -34,8 +33,8 @@ def process_file(filepath):
         
     info = data['info']
     match_id = os.path.basename(filepath)
-    match_type = info.get('match_type', 'T20')
-    season = str(info.get('season', '2026'))
+    match_type = info.get('match_type', 'T20') # Captures T20, ODI, or IPL
+    season = str(info.get('season', 'Unknown'))
     venue = info.get('venue', 'Unknown')
 
     conn = sqlite3.connect(DB_PATH)
@@ -45,13 +44,13 @@ def process_file(filepath):
     cursor.execute("INSERT OR IGNORE INTO matches VALUES (?, ?, ?, ?)", 
                    (match_id, match_type, season, venue))
 
-    # Ingest Squads
+    # Ingest Squads with match_type
     for team_name, players in info.get('players', {}).items():
         for player in players:
-            cursor.execute("INSERT INTO match_players VALUES (?, ?, ?, ?)", 
-                           (match_id, team_name, player, season))
+            cursor.execute("INSERT INTO match_players VALUES (?, ?, ?, ?, ?)", 
+                           (match_id, team_name, player, season, match_type))
         
-    # Ingest Deliveries
+    # Ingest Deliveries with match_type
     for inning in data.get('innings', []):
         for over_data in inning.get('overs', []):
             for delivery in over_data.get('deliveries', []):
@@ -73,5 +72,3 @@ if __name__ == "__main__":
         for filename in os.listdir(DATA_DIR):
             if filename.endswith(".json"):
                 process_file(os.path.join(DATA_DIR, filename))
-    else:
-        print(f"❌ Error: 'data' folder not found in {BASE_DIR}")
