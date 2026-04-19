@@ -1,20 +1,37 @@
 import sqlite3
 
-def get_matchup_stats(batter_name, bowler_name):
-    conn = sqlite3.connect('cricket_data.db')
+DB_NAME = 'cricket_data.db'
+
+def get_all_teams():
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    # Query your analytics view
+    cursor.execute("SELECT DISTINCT team_name FROM match_players ORDER BY team_name ASC")
+    teams = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return teams
+
+def get_players_by_team(team_name, season="2026"):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    query = "SELECT DISTINCT player_name FROM match_players WHERE team_name = ? AND season = ? ORDER BY player_name ASC"
+    cursor.execute(query, (team_name, season))
+    players = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return players
+
+def get_matchup_stats(batter_name, bowler_name):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    # Global stats (All seasons)
     query = """
-    SELECT total_balls, total_runs, strike_rate, balls_per_dismissal 
-    FROM v_player_matchups 
+    SELECT COUNT(*), SUM(runs), SUM(is_wicket) 
+    FROM deliveries 
     WHERE batter = ? AND bowler = ?
     """
     cursor.execute(query, (batter_name, bowler_name))
-    result = cursor.fetchone()
+    res = cursor.fetchone()
     conn.close()
     
-    if result:
-        return f"Stats for {batter_name} vs {bowler_name}: {result[1]} runs in {result[0]} balls, Strike Rate: {result[2]}, Balls per dismissal: {result[3]}"
-    else:
-        return "No matchup data found for these players."
+    if res and res[0] > 0: # Check if data exists
+        return {"balls": res[0], "runs": res[1], "dismissals": res[2] or 0}
+    return None

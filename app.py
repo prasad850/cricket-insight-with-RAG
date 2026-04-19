@@ -1,25 +1,41 @@
 import streamlit as st
-from reasoning_engine import get_matchup_stats
+from reasoning_engine import get_all_teams, get_players_by_team, get_matchup_stats
 from langchain_ollama import OllamaLLM
 
-st.title("🏏 Cricket Insight Engine")
+st.set_page_config(page_title="Cricket Insight Engine")
+st.title("🏏 Cricket Insight Engine (2026)")
 
-# 1. Inputs
-batter = st.text_input("Enter Batter Name")
-bowler = st.text_input("Enter Bowler Name")
+# --- 1. Selection Layer (2026 Season Only) ---
+col1, col2 = st.columns(2)
+with col1:
+    team_batter = st.selectbox("Select Batter Team", get_all_teams())
+    batter = st.selectbox("Select Batter", get_players_by_team(team_batter))
+with col2:
+    team_bowler = st.selectbox("Select Bowler Team", get_all_teams())
+    bowler = st.selectbox("Select Bowler", get_players_by_team(team_bowler))
 
+# --- 2. Analytics Layer ---
 if st.button("Get Analysis"):
-    # 2. Get Data
-    context_data = get_matchup_stats(batter, bowler)
-    st.write(f"Data Found: {context_data}")
+    stats = get_matchup_stats(batter, bowler)
     
-    # 3. Analyze with Llama 3
-    if "No matchup data" not in context_data:
-        llm = OllamaLLM(model="mistral:latest")
-        prompt = f"As a cricket coach, analyze this matchup: {context_data}. Is this a good matchup for the batter or the bowler?"
+    if stats:
+        st.write(f"### Historical Analysis: {batter} vs {bowler}")
+        st.metric("Runs", stats['runs'])
+        st.metric("Dismissals", stats['dismissals'])
         
-        with st.spinner("Analyzing..."):
+        # --- 3. Reasoning Layer ---
+        llm = OllamaLLM(model="mistral:latest")
+        prompt = f"""
+        Analyze this cricket matchup: 
+        Batter: {batter}, Bowler: {bowler}. 
+        Historical Stats: {stats['runs']} runs in {stats['balls']} balls, Dismissals: {stats['dismissals']}.
+        
+        Provide a tactical coach's recommendation. 
+        Note: The current match venue is Wankhede Stadium. Adjust advice based on this pitch context.
+        """
+        
+        with st.spinner("AI Coach is analyzing..."):
             analysis = llm.invoke(prompt)
-            st.success(analysis)
+            st.info(analysis)
     else:
-        st.warning("Not enough data to analyze.")
+        st.warning("No historical matchup data found for these players.")
