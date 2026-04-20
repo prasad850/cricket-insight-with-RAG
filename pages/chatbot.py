@@ -1,102 +1,182 @@
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
+import re
 from langchain_ollama import OllamaLLM
-from reasoning_engine import get_stats, get_tactical_report
 
-st.set_page_config(page_title="Cricket AI Coach", page_icon="🤖", layout="wide")
-st.title("🤖 AI Cricket Coach")
-st.caption("Ask general strategy questions, or type: 'Analyze [Batter] vs [Bowler]' for a tactical breakdown.")
+from reasoning_engine import (
+    get_stats,
+    get_tactical_report,
+    get_fallback_stats,
+    resolve_player_name,
+)
 
-# Initialize Chat History
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Cricket AI Analyst", page_icon="🤖", layout="wide")
+st.title("🤖 AI Cricket Analyst")
+
+# ---------------- MEMORY ----------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display History (including graphs)
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "fig" in message:
-            st.plotly_chart(message["fig"])
+# ---------------- DISPLAY HISTORY ----------------
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if "fig" in msg:
+            st.plotly_chart(msg["fig"], use_container_width=True)
 
-# Chat Input
-if prompt := st.chat_input("Ask strategy or type: 'Analyze [Batter] vs [Bowler]'"):
-    # Save user message
+# ---------------- INTENT DETECTION ----------------
+def detect_intent(prompt):
+    p = prompt.lower()
+
+    if ("vs" in p or "against" in p):
+        return "matchup"
+    elif "how to play" in p or "strategy" in p:
+        return "strategy"
+    else:
+        return "general"
+
+# ---------------- PLAYER EXTRACTION ----------------
+def extract_players(text):
+    text = text.lower()
+    text = re.sub(r"\bin (ipl|t20|odi|test)\b", "", text)
+
+    if "vs" in text:
+        parts = text.split("vs")
+    elif "against" in text:
+        parts = text.split("against")
+    else:
+        return None, None
+
+    if len(parts) != 2:
+        return None, None
+
+    p1 = parts[0].replace("analyze", "").replace("analysis", "").strip()
+    p2 = parts[1].replace("analysis", "").strip()
+
+    # 🔥 remove extra words
+    p1 = re.sub(r"[^a-zA-Z ]", "", p1)
+    p2 = re.sub(r"[^a-zA-Z ]", "", p2)
+
+    player1 = resolve_player_name(p1)
+    player2 = resolve_player_name(p2)
+
+    return player1, player2
+
+# ---------------- LLM ANALYST ----------------
+def run_llm(prompt, context=""):
+    llm = OllamaLLM(model="mistral:latest")
+
+    return llm.invoke(f"""
+You are a professional cricket analyst.
+
+RULES:
+- Use given stats first
+- Give practical strategy (shots + approach)
+- Avoid generic answers
+
+DATA:
+{context if context else "No structured data"}
+
+TASK:
+1. Key insight
+2. Strategy
+3. Risk
+
+User: {prompt}
+""")
+
+# ---------------- CHAT INPUT ----------------
+if prompt := st.chat_input("Ask: 'Kohli vs Bumrah' or strategy questions..."):
+
     st.session_state.messages.append({"role": "user", "content": prompt})
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # 1. DATA-DRIVEN ANALYSIS LOGIC
-        if " vs " in prompt.lower():
-            try:
-                # Basic Parsing
-                text = prompt.lower().replace("analyze", "").strip()
-                names = text.split(" vs ")
-                batter = names[0].strip().title()
-                bowler = names[1].strip().title()
-                
-                # Fetch stats (Defaulting to T20 for chatbot analysis)
-                stats = get_stats(batter, bowler, match_type="T20")
-                
-                if stats:
-                    # Get Tactical Report
-                    report = get_tactical_report(stats)
-                    
-                    # Display Strategy Report
-                    st.markdown(f"### 🎯 Tactical Report: {batter} vs {bowler}")
-                    if report['style'] == 'error': st.error(f"**{report['title']}**\n\n{report['content']}")
-                    elif report['style'] == 'success': st.success(f"**{report['title']}**\n\n{report['content']}")
-                    else: st.info(f"**{report['title']}**\n\n{report['content']}")
-                    
-                    # Display Metrics
-                    st.write(f"- **Runs Scored:** {stats['runs']} | **Balls Faced:** {stats['balls']} | **Strike Rate:** {stats['strike_rate']:.2f} | **Dismissals:** {stats['wickets']}")
-                    
-                    # Generate Chart
-                    balls_per_dismissal = stats['balls'] / max(1, stats['wickets'])
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Indicator(
-                        mode="gauge+number",
-                        value=stats['strike_rate'],
-                        title={'text': "Strike Rate"},
-                        domain={'x': [0, 0.45], 'y': [0, 1]},
-                        gauge={
-                            'axis': {'range': [0, 250]},
-                            'bar': {'color': "#1f77b4"},
-                            'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 140}
-                        }
-                    ))
-                    
-                    fig.add_trace(go.Indicator(
-                        mode="gauge+number",
-                        value=balls_per_dismissal,
-                        title={'text': "Balls per Dismissal"},
-                        domain={'x': [0.55, 1], 'y': [0, 1]},
-                        gauge={
-                            'axis': {'range': [0, 50]},
-                            'bar': {'color': "#2ca02c"},
-                            'threshold': {'line': {'color': "darkgreen", 'width': 4}, 'thickness': 0.75, 'value': 20}
-                        }
-                    ))
-                    
-                    fig.update_layout(height=300, title_text=f"Performance: {batter} vs {bowler}", margin=dict(l=20, r=20, t=50, b=20))
-                    st.plotly_chart(fig)
-                    
-                    # Save to session state
-                    st.session_state.messages.append({"role": "assistant", "content": "Analysis completed.", "fig": fig})
-                else:
-                    msg = "I couldn't find stats for that matchup in the database."
-                    st.markdown(msg)
-                    st.session_state.messages.append({"role": "assistant", "content": msg})
-                    
-            except Exception as e:
-                st.error("Format error: Please use 'Analyze [Batter] vs [Bowler]'")
-        
-        # 2. GENERAL AI COACH LOGIC (Using Mistral)
-        else:
-            with st.spinner("Thinking..."):
-                llm = OllamaLLM(model="mistral:latest") 
-                response = llm.invoke(f"You are an expert cricket coach. Answer this: {prompt}")
+
+        intent = detect_intent(prompt)
+
+        # ---------------- MATCHUP ----------------
+        if intent == "matchup":
+
+            batter, bowler = extract_players(prompt)
+
+            if not batter or not bowler:
+                response = "❌ Could not identify players. Try: 'Kohli vs Bumrah'"
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
+                st.stop()
+
+            stats = get_stats(batter, bowler, "T20")
+
+            fallback_used = False
+            if not stats or stats.get("quality") == "low":
+                stats = get_fallback_stats(batter, bowler, "T20")
+                fallback_used = True
+
+            if stats:
+                report = get_tactical_report(stats)
+
+                context = f"""
+Batter: {batter}
+Bowler: {bowler}
+Runs: {stats.get('runs')}
+Balls: {stats.get('balls')}
+Strike Rate: {stats.get('strike_rate')}
+Wickets: {stats.get('wickets')}
+Dot%: {stats.get('dot_pct')}
+Boundary%: {stats.get('boundary_pct')}
+"""
+
+                ai = run_llm(prompt, context)
+
+                msg = f"### 🏏 {batter} vs {bowler}\n\n"
+
+                if fallback_used:
+                    msg += "_Using overall performance (low direct data)_\n\n"
+
+                msg += f"**{report['title']}**\n{report['content']}\n\n"
+                msg += f"🤖 {ai}"
+
+                st.markdown(msg)
+
+                # Chart
+                fig = px.bar(
+                    [
+                        {"Metric": "Runs", "Value": stats["runs"]},
+                        {"Metric": "Strike Rate", "Value": stats["strike_rate"]},
+                        {"Metric": "Wickets", "Value": stats["wickets"]},
+                        {"Metric": "Dot %", "Value": stats["dot_pct"]},
+                    ],
+                    x="Metric",
+                    y="Value",
+                    color="Metric",
+                    title=f"{batter} vs {bowler} Analysis"
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": msg,
+                    "fig": fig
+                })
+
+            else:
+                ai = run_llm(prompt)
+                st.markdown(ai)
+                st.session_state.messages.append({"role": "assistant", "content": ai})
+
+        # ---------------- STRATEGY ----------------
+        elif intent == "strategy":
+            ai = run_llm(prompt)
+            st.markdown(ai)
+            st.session_state.messages.append({"role": "assistant", "content": ai})
+
+        # ---------------- GENERAL ----------------
+        else:
+            ai = run_llm(prompt)
+            st.markdown(ai)
+            st.session_state.messages.append({"role": "assistant", "content": ai})

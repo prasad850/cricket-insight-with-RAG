@@ -1,114 +1,170 @@
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
 from langchain_ollama import OllamaLLM
-from reasoning_engine import get_all_teams, get_players_by_team, get_stats, get_tactical_report, get_all_seasons
 
-# Page Setup
-st.set_page_config(page_title="Cricket Analytics Dashboard", layout="wide")
-st.title("🏏 Cricket Insight Engine (2026)")
+from reasoning_engine import (
+    get_all_teams,
+    get_players_by_team,
+    get_stats,
+    get_tactical_report,
+    get_all_seasons,
+    get_fallback_stats
+)
 
-# --- 1. Filter Section ---
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Cricket Insight Engine", layout="wide")
+st.title("🏏 Cricket Insight Engine (AI + Data)")
+
+# ---------------- SIDEBAR ----------------
 st.sidebar.header("Filter Settings")
-# Selecting format first dictates the teams and players available
+
 m_type = st.sidebar.selectbox("Select Match Format", ["T20", "ODI", "IPL"])
 
-# Option to choose year/season but stats remain overall
 available_seasons = ["All Time"] + get_all_seasons()
 selected_season = st.sidebar.selectbox("Select Season", available_seasons)
 
-# Get teams based on the selected match_type
 teams = get_all_teams(m_type)
 
+# ---------------- PLAYER SELECTION ----------------
 col1, col2 = st.columns(2)
+
 with col1:
-    team_batter = st.selectbox("Select Batter Team", teams, key="t1")
-    # Get players based on team, format, role, and season
-    batter = st.selectbox("Select Batter", get_players_by_team(team_batter, m_type, role="batter", season=selected_season))
+    team_batter = st.selectbox("Select Batter Team", teams)
+    batter = st.selectbox(
+        "Select Batter",
+        get_players_by_team(team_batter, m_type, role="batter", season=selected_season)
+    )
 
 with col2:
-    team_bowler = st.selectbox("Select Bowler Team", teams, key="t2")
-    # Get players based on team, format, role, and season
-    bowler = st.selectbox("Select Bowler", get_players_by_team(team_bowler, m_type, role="bowler", season=selected_season))
+    team_bowler = st.selectbox("Select Bowler Team", teams)
+    bowler = st.selectbox(
+        "Select Bowler",
+        get_players_by_team(team_bowler, m_type, role="bowler", season=selected_season)
+    )
 
-# --- 2. Analytics Section ---
+# ---------------- ANALYSIS ----------------
 if st.button("Analyze Matchup"):
+
     if batter == bowler:
-        st.error("Batter and Bowler cannot be the same person!")
-    else:
-        # Fetch Stats (Filtered by format)
-        stats = get_stats(batter, bowler, match_type=m_type)
-        
-        if stats:
-            # A. Tactical Strategy Display
-            st.markdown("### 🎯 Tactical Strategy (Mistral AI)")
-            with st.spinner(f"Analyzing {batter} vs {bowler} using Mistral..."):
-                try:
-                    llm = OllamaLLM(model="mistral:latest")
-                    prompt = f"Act as an expert cricket coach. Give a 2-sentence tactical strategy for the batter {batter} facing the bowler {bowler} in {m_type} cricket. The batter has scored {stats['runs']} runs off {stats['balls']} balls against this bowler, with {stats['wickets']} dismissals and a strike rate of {stats['strike_rate']:.2f}. Be actionable, insightful, and concise."
-                    ai_response = llm.invoke(prompt)
-                    st.success(f"**AI Strategy:**\n\n{ai_response}")
-                except Exception as e:
-                    # Fallback to static report if ollama fails
-                    report = get_tactical_report(stats)
-                    if report['style'] == 'error': st.error(f"**{report['title']}**\n\n{report['content']}")
-                    elif report['style'] == 'success': st.success(f"**{report['title']}**\n\n{report['content']}")
-                    else: st.info(f"**{report['title']}**\n\n{report['content']}")
-                    st.warning(f"Could not reach Mistral AI. Displaying static strategy instead.")
-            
-            # B. Metrics
-            st.write("---")
-            st.subheader(f"Performance Analysis: {m_type}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Runs", stats['runs'])
-            c2.metric("Strike Rate", f"{stats['strike_rate']:.2f}")
-            c3.metric("Dismissals", stats['wickets'])
-            
-            # C. Visuals
-            g1, g2 = st.columns(2)
-            
-            # Strike Rate Gauge
-            fig1 = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=stats['strike_rate'],
-                title={'text': "Strike Rate"},
-                gauge={
-                    'axis': {'range': [0, 250]},
-                    'bar': {'color': "#1f77b4"},
-                    'steps': [
-                        {'range': [0, 100], 'color': "#e0e0e0"},
-                        {'range': [100, 150], 'color': "#b3cde3"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "red", 'width': 4},
-                        'thickness': 0.75, 'value': 140
-                    }
-                }
-            ))
-            fig1.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
-            g1.plotly_chart(fig1, use_container_width=True)
-            
-            # Balls per Dismissal Gauge
-            balls_per_dismissal = stats['balls'] / max(1, stats['wickets'])
-            fig2 = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=balls_per_dismissal,
-                title={'text': "Balls per Dismissal"},
-                gauge={
-                    'axis': {'range': [0, 50]},
-                    'bar': {'color': "#2ca02c"},
-                    'steps': [
-                        {'range': [0, 15], 'color': "#f2dede"},
-                        {'range': [15, 30], 'color': "#dff0d8"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "darkgreen", 'width': 4},
-                        'thickness': 0.75, 'value': 20
-                    }
-                }
-            ))
-            fig2.update_layout(height=250, margin=dict(l=10, r=10, t=40, b=10))
-            g2.plotly_chart(fig2, use_container_width=True)
-            
+        st.error("Batter and Bowler cannot be the same!")
+        st.stop()
+
+    # -------- DIRECT MATCHUP --------
+    stats = get_stats(batter, bowler, m_type)
+
+    # -------- FALLBACK --------
+    fallback_used = False
+    if not stats or stats.get("quality") == "low":
+        stats = get_fallback_stats(batter, bowler, m_type)
+        fallback_used = True
+
+    st.markdown("### 🎯 Tactical Strategy (AI + Data)")
+
+    # -------- REPORT --------
+    if stats:
+        report = get_tactical_report(stats)
+
+        if fallback_used:
+            st.warning("⚠️ Limited direct data. Using overall player analysis.")
+
+        if report['style'] == 'error':
+            st.error(f"**{report['title']}**\n\n{report['content']}")
+        elif report['style'] == 'success':
+            st.success(f"**{report['title']}**\n\n{report['content']}")
         else:
-            st.warning(f"No matchup data found for these players in {m_type}.")
+            st.info(f"**{report['title']}**\n\n{report['content']}")
+
+    else:
+        st.warning("No database stats found. Using AI-only strategy.")
+
+    # -------- AI ANALYST --------
+    with st.spinner("Generating AI insights..."):
+        try:
+            llm = OllamaLLM(model="mistral:latest")
+
+            db_context = ""
+            if stats:
+                db_context = f"""
+Batter: {batter}
+Bowler: {bowler}
+Runs: {stats.get('runs', 0)}
+Balls: {stats.get('balls', 0)}
+Strike Rate: {stats.get('strike_rate', 0)}
+Wickets: {stats.get('wickets', 0)}
+Dot Percentage: {stats.get('dot_pct', 0)}
+Boundary Percentage: {stats.get('boundary_pct', 0)}
+"""
+
+            ai_prompt = f"""
+You are a professional cricket analyst.
+
+RULES:
+- Use given stats first
+- Give practical strategy (shots + approach)
+- Avoid generic answers
+
+DATA:
+{db_context if db_context else "No structured data"}
+
+TASK:
+1. Key insight
+2. Strategy for batter
+3. Strategy for bowler
+
+Keep answer short (3-4 lines).
+"""
+
+            ai_response = llm.invoke(ai_prompt)
+
+        except Exception:
+            ai_response = "AI service unavailable. Showing data-based insights only."
+
+    if ai_response:
+        st.markdown("### 🤖 AI Analyst Insights")
+        st.info(ai_response)
+
+    # -------- METRICS --------
+    if stats:
+        st.write("---")
+        st.subheader("📊 Performance Metrics")
+
+        # 1. Clean row of metrics instead of giant gauge charts
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Runs Scored", stats.get('runs', 0))
+        c2.metric("Strike Rate", stats.get('strike_rate', 0))
+        c3.metric("Wickets", stats.get('wickets', 0))
+        
+        balls = stats.get('balls', 1)
+        wkt = stats.get('wickets', 0)
+        c4.metric("Balls/Dismissal", round(balls / wkt if wkt > 0 else balls, 1))
+
+        # 2. Second row of tactical secondary metrics
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("Balls Faced", stats.get('balls', 0))
+        c6.metric("Dot Ball %", f"{stats.get('dot_pct', 0)}%")
+        c7.metric("Boundary %", f"{stats.get('boundary_pct', 0)}%")
+        c8.metric("Data Depth", stats.get('quality', 'unknown').title())
+
+        # 3. Simple modern Bar Chart 
+        st.write(" ")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=["Runs", "Balls", "Dot %", "Boundary %", "Strike Rate"],
+            y=[
+                stats.get('runs', 0), 
+                stats.get('balls', 0), 
+                stats.get('dot_pct', 0), 
+                stats.get('boundary_pct', 0), 
+                stats.get('strike_rate', 0)
+            ],
+            marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'],
+            texttemplate='%{y}',
+            textposition='outside'
+        ))
+        fig.update_layout(
+            title="Overview Comparison", 
+            height=350, 
+            margin=dict(t=40, b=0, l=0, r=0), 
+            yaxis=dict(visible=False, showticklabels=False)
+        )
+        st.plotly_chart(fig, use_container_width=True)
